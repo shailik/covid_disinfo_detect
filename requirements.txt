@@ -18,3 +18,7 @@ flake8>=3.7.9
 google-cloud-storage==1.29.0
 pytest-custom-exit-code==0.3.0
 twarc>=1.10.0
+pyarrow==0.17.1
+gcsfs==0.6.2
+numba==0.50.1
+swifter==0.305

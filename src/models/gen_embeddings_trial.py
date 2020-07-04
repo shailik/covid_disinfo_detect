@@ -14,6 +14,7 @@ from nltk.tokenize import TweetTokenizer
 from emoji import demojize
 from sentence_transformers import SentenceTransformer
 import re
+import config
 tqdm.pandas()
 
 
@@ -61,8 +62,8 @@ def dates_need_embeddings():
     need_embeddings = sorted(list(
         set(parquet_tweet_dates) - set(parquet_embed_dates)
     ))
-
-    return need_embeddings
+    # testing with only two most recent dates
+    return need_embeddings[-2:]
 
 
 def normalize_token(token):
@@ -221,6 +222,9 @@ def embedding_parquet_to_gcs(df, day):
 
 
 def main():
+    # set seeds
+    config.set_seed(config.SEED_VALUE)
+
     need_embeddings = dates_need_embeddings()
     EMBED_MODEL_NAME = 'distilbert-base-nli-stsb-mean-tokens'
 
