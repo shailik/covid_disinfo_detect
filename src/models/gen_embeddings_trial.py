@@ -8,8 +8,8 @@ means by which to store embeddings, most likely in a database
 of some sort (and not within the 'data' sub-folder of the directory)
 '''
 import pandas as pd
+from google.cloud import storage
 from tqdm.auto import tqdm
-from pathlib import Path
 from nltk.tokenize import TweetTokenizer
 from emoji import demojize
 from sentence_transformers import SentenceTransformer
@@ -17,8 +17,52 @@ import re
 tqdm.pandas()
 
 
-def path_to_data():
-    return Path.cwd() / 'data' / 'dailies'
+def list_parquet_tweet_dates(bucket_name='thepanacealab_covid19twitter'):
+    '''
+    Gathers the dates of tweet-related parquet files already stored in GCS
+    '''
+    client = storage.Client()
+    bucket = client.get_bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix='dailies/')
+    parquet_files = [
+        str(i).split(',')[1].strip() for i in blobs
+        if str(i).split(',')[1].endswith('_tweets.parquet')
+    ]
+    parquet_tweet_dates = [
+        i.split('/')[1] for i in parquet_files
+    ]
+    return parquet_tweet_dates
+
+
+def list_parquet_embedding_dates(bucket_name='thepanacealab_covid19twitter'):
+    '''
+    Gathers the dates of embedding-related parquet files already stored in GCS
+    '''
+    client = storage.Client()
+    bucket = client.get_bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix='dailies/')
+    parquet_files = [
+        str(i).split(',')[1].strip() for i in blobs
+        if str(i).split(',')[1].endswith('_embeddings.parquet')
+    ]
+    parquet_embed_dates = [
+        i.split('/')[1] for i in parquet_files
+    ]
+    return parquet_embed_dates
+
+
+def dates_need_embeddings():
+    '''
+    Gather dates that have parquet files, but no accompanying embedding
+    parquet file.
+    '''
+    parquet_tweet_dates = list_parquet_tweet_dates()
+    parquet_embed_dates = list_parquet_embedding_dates()
+    need_embeddings = sorted(list(
+        set(parquet_tweet_dates) - set(parquet_embed_dates)
+    ))
+
+    return need_embeddings
 
 
 def normalize_token(token):
@@ -78,7 +122,7 @@ def normalize_tweet(tweet):
     return " ".join(normTweet.split())
 
 
-def clean_data(df):
+def clean_for_embeddings(df):
     '''
     Given input dataframe, creates subset of only English
     tweets, and applies text normalization according to
@@ -92,26 +136,34 @@ def clean_data(df):
     df_english['normalized_tweet'] = df_english['full_text'].progress_apply(
         lambda tweet: normalize_tweet(tweet)
     ).str.lower()
+
     return df_english
 
 
-def load_parquet_data(data_path, filename):
+def load_parquet_data(bucket_path):
     '''
-    Loads in file according to data_path and filename,
-    applies necessary edits to return only English
-    Tweets, and returns pandas dataframe
+    Takes path to tweet parquet file in GCS bucket and
+    returns a Pandas DataFrame
     '''
-    # get folder name according to filename
-    folder = filename.split('_')[0]
-
-    print('Loading data from parquet file...\n')
     # load in parquet file
     df = pd.read_parquet(
-        f'{data_path}/{folder}/{filename}',
+        bucket_path
     )
 
-    # apply necessary edits
-    df = clean_data(df)
+    return df
+
+
+def embedding_data_prep_wrapper(day):
+    """
+    Preps data for embeddings
+    """
+    bucket_path = (
+        f'gs://thepanacealab_covid19twitter/dailies/{day}/{day}_tweets.parquet'
+    )
+    # load tweet parquet data
+    df = load_parquet_data(bucket_path)
+    # gather English tweets and text normalization
+    df = clean_for_embeddings(df)
 
     return df
 
@@ -157,43 +209,36 @@ def generate_embedding_df(tweet_ids, tweet_embeddings):
     return df
 
 
-def save_embeddings(filename, embeddings_df):
+def embedding_parquet_to_gcs(df, day):
     '''
-    Given a filename, and two pandas dataframe, one of all the
-    embeddings, and of the UMAP embeddings (reduced to 2D),
-    then save the files in same location where parquet file was
-    stored.
+    Converts pandas dataframe for a given day into a parquet
+    file for storage.
     '''
-    # get folder name according to filename (i.e. the date)
-    folder_date = filename.split('_')[0]
-    # retrieve path to data
-    data_path = path_to_data()
-
-    # save both embedding dataframes
-    embeddings_df.to_parquet(
-        f'{data_path}/{folder_date}/{folder_date}_embeddings.parquet',
+    df.to_parquet(
+        f'gs://thepanacealab_covid19twitter/dailies/{day}/{day}_embeddings.parquet'
     )
-    print('Saved embeddings to parquet file.')
+    print(f'Dataframe of embeddings for {day} uploaded to bucket as parquet file.')
 
 
 def main():
-    data_path = path_to_data()
-    filename = str(input('What is the filename?\n'))
+    need_embeddings = dates_need_embeddings()
     EMBED_MODEL_NAME = 'distilbert-base-nli-stsb-mean-tokens'
-    # load parquet file
-    df = load_parquet_data(data_path, filename)
-    # gather tweets
-    tweets = df['normalized_tweet']
-    # gather tweet IDs that are associated with first 1k tweets
-    tweet_ids = df['id_str']
-    # create Sentence Transformer model from distilbert
-    model = create_embedding_model(EMBED_MODEL_NAME)
-    # generate tweet embeddings
-    tweet_embeddings = generate_embeddings(model, tweets)
-    # generate df with tweet IDs and associated embedding values
-    embeddings_df = generate_embedding_df(tweet_ids, tweet_embeddings)
-    # save embeddings dataframe to parquet file
-    save_embeddings(filename, embeddings_df)
+
+    for day in need_embeddings:
+        # gather data
+        df = embedding_data_prep_wrapper(day)
+        # gather tweets
+        tweets = df['normalized_tweet']
+        # gather tweet IDs that are associated with first 1k tweets
+        tweet_ids = df['id_str']
+        # create Sentence Transformer model from distilbert
+        model = create_embedding_model(EMBED_MODEL_NAME)
+        # generate tweet embeddings
+        tweet_embeddings = generate_embeddings(model, tweets)
+        # generate df with tweet IDs and associated embedding values
+        embeddings_df = generate_embedding_df(tweet_ids, tweet_embeddings)
+        # save to GCS
+        embedding_parquet_to_gcs(embeddings_df, day)
 
 
 if __name__ == '__main__':
