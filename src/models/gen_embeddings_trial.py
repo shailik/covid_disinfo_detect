@@ -15,7 +15,12 @@ from emoji import demojize
 from sentence_transformers import SentenceTransformer
 import re
 import config
+import numpy as np
 tqdm.pandas()
+
+
+# set model name global variable
+EMBED_MODEL_NAME = 'distilbert-base-nli-stsb-mean-tokens'
 
 
 def list_parquet_tweet_dates(bucket_name='thepanacealab_covid19twitter'):
@@ -150,6 +155,12 @@ def load_parquet_data(bucket_path):
     df = pd.read_parquet(
         bucket_path
     )
+    # gather lengths of tweets
+    df['tweet_length'] = df['full_text'].apply(lambda x: len(x))
+    # remove tweets that are abnormally long
+    df = df[df['tweet_length'] <= 330].reset_index(drop=True)
+    # then drop column (we don't need it any further)
+    df = df.drop(columns='tweet_length')
 
     return df
 
@@ -186,8 +197,12 @@ def generate_embeddings(model, tweets):
     encode tweets with model object.
     '''
     print('Generating tweet embeddings...\n')
+
+    # encode the tweets
     tweet_embeddings = model.encode(tweets, show_progress_bar=True)
-    return tweet_embeddings
+
+    # since embeddings returned as list of arrays, convert to numpy array
+    return np.array(tweet_embeddings)
 
 
 def generate_embedding_df(tweet_ids, tweet_embeddings):
@@ -226,7 +241,7 @@ def main():
     config.set_seed(config.SEED_VALUE)
 
     need_embeddings = dates_need_embeddings()
-    EMBED_MODEL_NAME = 'distilbert-base-nli-stsb-mean-tokens'
+    embed_model_name = EMBED_MODEL_NAME
 
     for day in need_embeddings:
         # gather data
@@ -236,7 +251,7 @@ def main():
         # gather tweet IDs that are associated with first 1k tweets
         tweet_ids = df['id_str']
         # create Sentence Transformer model from distilbert
-        model = create_embedding_model(EMBED_MODEL_NAME)
+        model = create_embedding_model(embed_model_name)
         # generate tweet embeddings
         tweet_embeddings = generate_embeddings(model, tweets)
         # generate df with tweet IDs and associated embedding values
