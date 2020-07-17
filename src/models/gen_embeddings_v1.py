@@ -40,21 +40,21 @@ def list_parquet_tweet_dates(bucket_name='thepanacealab_covid19twitter'):
     return parquet_tweet_dates
 
 
-def list_parquet_embedding_dates(bucket_name='thepanacealab_covid19twitter'):
+def list_csv_embedding_dates(bucket_name='thepanacealab_covid19twitter'):
     '''
     Gathers the dates of embedding-related parquet files already stored in GCS
     '''
     client = storage.Client()
     bucket = client.get_bucket(bucket_name)
     blobs = bucket.list_blobs(prefix='dailies/')
-    parquet_files = [
+    csv_files = [
         str(i).split(',')[1].strip() for i in blobs
-        if str(i).split(',')[1].endswith('_embeddings.parquet')
+        if str(i).split(',')[1].endswith('_embeddings.csv')
     ]
-    parquet_embed_dates = [
-        i.split('/')[1] for i in parquet_files
+    csv_embed_dates = [
+        i.split('/')[1] for i in csv_files
     ]
-    return parquet_embed_dates
+    return csv_embed_dates
 
 
 def dates_need_embeddings():
@@ -63,9 +63,9 @@ def dates_need_embeddings():
     parquet file.
     '''
     parquet_tweet_dates = list_parquet_tweet_dates()
-    parquet_embed_dates = list_parquet_embedding_dates()
+    csv_embed_dates = list_csv_embedding_dates()
     need_embeddings = sorted(list(
-        set(parquet_tweet_dates) - set(parquet_embed_dates)
+        set(parquet_tweet_dates) - set(csv_embed_dates)
     ))
     # testing with only two most recent dates
     return need_embeddings[-2:]
@@ -225,15 +225,16 @@ def generate_embedding_df(tweet_ids, tweet_embeddings):
     return df
 
 
-def embedding_parquet_to_gcs(df, day):
+def embedding_csv_to_gcs(df, day):
     '''
     Converts pandas dataframe for a given day into a parquet
     file for storage.
     '''
-    df.to_parquet(
-        f'gs://thepanacealab_covid19twitter/dailies/{day}/{day}_embeddings.parquet'
+    df.to_csv(
+        f'gs://thepanacealab_covid19twitter/dailies/{day}/{day}_embeddings.csv',
+        index=False
     )
-    print(f'Dataframe of embeddings for {day} uploaded to bucket as parquet file.')
+    print(f'Dataframe of embeddings for {day} uploaded to bucket as CSV file.')
 
 
 def main():
@@ -257,7 +258,7 @@ def main():
         # generate df with tweet IDs and associated embedding values
         embeddings_df = generate_embedding_df(tweet_ids, tweet_embeddings)
         # save to GCS
-        embedding_parquet_to_gcs(embeddings_df, day)
+        embedding_csv_to_gcs(embeddings_df, day)
 
 
 if __name__ == '__main__':
